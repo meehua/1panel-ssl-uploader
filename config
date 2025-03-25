@@ -1,0 +1,7 @@
+[server1]
+api_url = "https://panel1.example.com"
+api_key = "your-api-key-1"
+
+[server2]
+api_url = "https://panel2.example.com"
+api_key = "your-api-key-2"

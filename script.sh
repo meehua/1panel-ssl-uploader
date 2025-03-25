@@ -4,12 +4,12 @@
 # 使用方法 https://www.l0u0l.com/posts/1panel-ssl-uploader/
 
 ### 全局配置区 ========================================================
-# 注意：以下两项配置在使用前需要修改
-API_URL="https://your-1panel-domain.com"  # 目标1Panel面板地址
-API_KEY="your-api-key-here"               # 面板API密钥
-
-# 下面的所有配置都是可选修改，根据实际情况调整，没问题就保持默认
+# 注意：以下配置项在使用前可能需要修改
 TIME_ZONE="Asia/Shanghai"                 # 时区设置（用于日志时间显示）
+
+# 默认配置文件路径（基于脚本所在目录）
+SCRIPT_DIR=$(dirname "$(readlink -f "$0")")  # 自动获取脚本所在目录
+DEFAULT_CONFIG_FILE="${SCRIPT_DIR}/config"   # 配置文件与脚本同目录
 
 # 默认证书路径（可通过命令行参数覆盖）
 DEFAULT_CERT_FILE="./fullchain.pem"       # 默认证书文件路径（修改会导致自动模式失效）
@@ -35,21 +35,44 @@ die() {
     exit 1
 }
 
+# 解析配置文件
+parse_config_file() {
+    local config_file=$1
+    declare -gA SERVER_CONFIG
+    
+    local current_section=""
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line=$(echo "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+        if [[ $line =~ ^\[([a-zA-Z0-9_\.-]+)\]$ ]]; then
+            current_section="${BASH_REMATCH[1]}"
+        elif [[ $line =~ ^([a-zA-Z0-9_]+)[[:space:]]*=[[:space:]]*\"?(.*?)\"?$ ]]; then
+            local key="${BASH_REMATCH[1],,}"
+            local value="${BASH_REMATCH[2]}"
+            SERVER_CONFIG["${current_section}.${key}"]="${value//\"/}"
+        fi
+    done < "$config_file"
+}
+
 # 执行API请求并处理响应
 execute_api_request() {
+    local api_url=$1
+    local api_key=$2
+    local server_name=$3
+    local ssl_id=$4
+    
     local current_ts=$(date +%s)
-    local panel_token=$(echo -n "1panel${API_KEY}${current_ts}" | md5sum | cut -d' ' -f1)
+    local panel_token=$(echo -n "1panel${api_key}${current_ts}" | md5sum | cut -d' ' -f1)
     local current_time=$(TZ=$TIME_ZONE date '+%Y-%m-%d %H:%M:%S %Z (UTC%:z)')
 
     # 构造并发送API请求
-    local response=$(curl -sSk -w "\n%{json}" -X POST "$API_URL/api/v1/websites/ssl/upload" \
+    local response=$(curl -sSk -w "\n%{json}" -X POST "$api_url/api/v1/websites/ssl/upload" \
         -H "1Panel-Token: $panel_token" \
         -H "1Panel-Timestamp: $current_ts" \
         -H "Content-Type: application/json" \
         -d "$(cat <<EOF
 {
     "type": "paste",
-    "sslID": $SSLID,
+    "sslID": $ssl_id,
     "certificate": "$cert_content",
     "privateKey": "$key_content",
     "description": "同步更新 @$current_time"
@@ -65,13 +88,45 @@ EOF
 
     # 返回结果状态码
     if [[ "$resp_code" == "200" ]]; then
-        log "✔ 证书推送成功 | ID: $SSLID | 服务端时间: ${current_time}"
+        log "[${server_name}] ✔ 证书推送成功 | ID: $ssl_id | 服务端时间: ${current_time}"
         return 0
     else
-        log "✘ 证书推送失败（业务码: ${resp_code:-无} | HTTP状态: ${http_code:-无响应}）"
-        [[ -n "$resp_msg" ]] && log "错误详情: ${resp_msg:0:200}"  # 截断长消息避免刷屏
+        log "[${server_name}] ✘ 证书推送失败（业务码: ${resp_code:-无} | HTTP状态: ${http_code:-无响应}）"
+        [[ -n "$resp_msg" ]] && log "[${server_name}] 错误详情: ${resp_msg:0:200}"
         return 1
     fi
+}
+
+# 处理单个服务器的上传流程
+process_server() {
+    local api_url=$1
+    local api_key=$2
+    local server_name=$3
+    local ssl_id=$4
+    
+    local exit_code=1
+    local attempt=1
+
+    while : ; do
+        log "[${server_name}] 尝试执行证书推送 (${attempt}/${max_retries})"
+        
+        if execute_api_request "$api_url" "$api_key" "$server_name" "$ssl_id"; then
+            exit_code=0
+            break
+        fi
+
+        if (( attempt >= max_retries )); then
+            log "[${server_name}] 已达到最大重试次数 (${max_retries})"
+            break
+        fi
+
+        ((attempt++))
+        remaining_attempts=$(( max_retries - attempt + 1 ))
+        log "[${server_name}] 等待 ${retry_interval} 秒后重试 (剩余尝试次数: ${remaining_attempts})"
+        sleep "$retry_interval"
+    done
+
+    return $exit_code
 }
 
 ### 主程序 ============================================================
@@ -81,13 +136,16 @@ semi_auto_cert=0                 # 半自动模式标志（自定义证书路径
 current_window=$DEFAULT_AUTO_WINDOW  # 当前时间窗口阈值
 max_retries=$DEFAULT_MAX_RETRIES # 最大重试次数
 retry_interval=$DEFAULT_RETRY_INTERVAL # 重试间隔时间
+declare -A SERVER_CONFIG         # 服务器配置存储
 
 # 解析命令行参数
-while getopts ":s:c:p:fm:r:i:" opt; do
+while getopts ":s:c:p:S:C:fm:r:i:" opt; do
   case $opt in
-    s) SSLID="$OPTARG" ;;        # 必需参数：目标SSL证书ID
+    s) IFS=',' read -ra SSLID_LIST <<< "$OPTARG" ;; # 改为接收逗号分隔的ID列表
     c) CERT_FILE="$OPTARG" ;;    # 可选参数：自定义证书文件路径
     p) KEY_FILE="$OPTARG" ;;     # 可选参数：自定义私钥文件路径
+    S) IFS=',' read -ra selected_servers <<< "$OPTARG" ;; # 服务器列表改为数组
+    C) CONFIG_FILE="$OPTARG" ;;  # 可选参数：自定义配置文件路径
     f) force_mode=1 ;;           # 可选参数：启用强制模式
     m) semi_auto_window="$OPTARG" # 可选参数：覆盖半自动模式时间窗口
        [[ $semi_auto_window =~ ^[0-9]+$ ]] || die "无效时间窗口值: $semi_auto_window" ;;
@@ -101,12 +159,30 @@ while getopts ":s:c:p:fm:r:i:" opt; do
 done
 shift $((OPTIND - 1))
 
-# 设置默认证书路径
+# 设置默认值
+: "${CONFIG_FILE:=$DEFAULT_CONFIG_FILE}"
 : "${CERT_FILE:=$DEFAULT_CERT_FILE}"
 : "${KEY_FILE:=$DEFAULT_KEY_FILE}"
 
 # 参数验证 ------------------------------------------------------------
-[[ -z "$SSLID" ]] && die "必须通过 -s 参数指定SSL证书ID"
+[[ -z "${SSLID_LIST[*]}" ]] && die "必须通过 -s 参数指定SSL证书ID列表"
+[[ -z "${selected_servers[*]}" ]] && die "必须通过 -S 参数指定目标服务器列表"
+
+# 验证ID列表与服务器列表数量一致
+if [[ ${#SSLID_LIST[@]} -ne ${#selected_servers[@]} ]]; then
+    die "SSLID数量（${#SSLID_LIST[@]}）与服务器数量（${#selected_servers[@]}）不匹配"
+fi
+
+# 加载配置文件
+[[ ! -f "$CONFIG_FILE" ]] && die "配置文件不存在: $CONFIG_FILE"
+parse_config_file "$CONFIG_FILE"
+
+# 验证服务器配置
+for server in "${selected_servers[@]}"; do
+    if [[ -z "${SERVER_CONFIG["${server}.api_url"]}" || -z "${SERVER_CONFIG["${server}.api_key"]}" ]]; then
+        die "服务器 '$server' 配置不完整（缺少api_url/api_key）"
+    fi
+done
 
 # 检测运行模式 --------------------------------------------------------
 if [[ "$CERT_FILE" != "$DEFAULT_CERT_FILE" || "$KEY_FILE" != "$DEFAULT_KEY_FILE" ]]; then
@@ -139,33 +215,23 @@ else
 fi
 
 ### 证书内容处理 ======================================================
-# 使用jq处理特殊字符并移除外层引号
 cert_content=$(jq -Rs . < "$CERT_FILE" | sed 's/^"\(.*\)"$/\1/') || die "证书内容处理失败"
 key_content=$(jq -Rs . < "$KEY_FILE" | sed 's/^"\(.*\)"$/\1/') || die "私钥内容处理失败"
 
 ### 请求执行逻辑 ======================================================
-exit_code=1  # 默认失败状态
-attempt=1     # 当前尝试次数
-
-while : ; do
-    log "尝试执行证书推送 (${attempt}/${max_retries})"
+overall_exit_code=0  # 初始状态为成功
+for i in "${!selected_servers[@]}"; do
+    server="${selected_servers[$i]}"
+    ssl_id="${SSLID_LIST[$i]}"
+    api_url="${SERVER_CONFIG["${server}.api_url"]}"
+    api_key="${SERVER_CONFIG["${server}.api_key"]}"
     
-    if execute_api_request; then
-        exit_code=0
-        break
+    log "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    log "开始上传到 $server (SSL ID: ${ssl_id})"
+    
+    if ! process_server "$api_url" "$api_key" "$server" "$ssl_id"; then
+        overall_exit_code=1  # 任意一个失败即标记为失败
     fi
-
-    # 达到最大重试次数时退出循环
-    if (( attempt >= max_retries )); then
-        log "已达到最大重试次数 (${max_retries})"
-        break
-    fi
-
-    # 显示重试提示
-    ((attempt++))
-    remaining_attempts=$(( max_retries - attempt + 1 ))
-    log "等待 ${retry_interval} 秒后重试 (剩余尝试次数: ${remaining_attempts})"
-    sleep "$retry_interval"
 done
 
-exit $exit_code
+exit $overall_exit_code
