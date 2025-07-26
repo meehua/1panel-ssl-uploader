@@ -82,7 +82,8 @@ EOF
 
     # 解析响应结果
     local resp_body=$(sed '$d' <<< "$response")
-    local http_code=$(jq -r '.http_code' <<< "$response")
+    local curl_info=$(tail -n1 <<< "$response")
+    local http_code=$(jq -r '.http_code' <<< "$curl_info")
     local resp_code=$(jq -r '.code' <<< "$resp_body" 2>/dev/null)
     local resp_msg=$(jq -r '.message' <<< "$resp_body" 2>/dev/null || echo "响应解析失败")
 
