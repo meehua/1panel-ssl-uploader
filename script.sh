@@ -65,7 +65,7 @@ execute_api_request() {
     local current_time=$(TZ=$TIME_ZONE date '+%Y-%m-%d %H:%M:%S %Z (UTC%:z)')
 
     # 构造并发送API请求
-    local response=$(curl -sSk -w "\n%{json}" -X POST "$api_url/api/v1/websites/ssl/upload" \
+    local response=$(curl -sSk -w "\n%{json}" -X POST "$api_url/api/v2/websites/ssl/upload" \
         -H "1Panel-Token: $panel_token" \
         -H "1Panel-Timestamp: $current_ts" \
         -H "Content-Type: application/json" \
