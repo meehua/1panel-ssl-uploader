@@ -23,6 +23,9 @@ DEFAULT_SEMI_AUTO_WINDOW=86400            # 半自动模式检测阈值（自定
 DEFAULT_MAX_RETRIES=8                     # 默认最大重试次数
 DEFAULT_RETRY_INTERVAL=15                 # 默认重试间隔时间（秒）
 
+# 依赖版本要求
+MIN_JQ_VERSION="1.5"                      # jq 需支持 -Rs 与 // 运算符
+
 ### 函数定义 ==========================================================
 # 输出带时间戳的日志信息
 log() {
@@ -33,6 +36,121 @@ log() {
 die() {
     log "ERROR: $1" >&2
     exit 1
+}
+
+# 提取版本号中的数字部分
+extract_version_number() {
+    local raw_value=$1
+
+    if [[ $raw_value =~ ([0-9]+([.][0-9]+)*) ]]; then
+        printf '%s\n' "${BASH_REMATCH[1]}"
+        return 0
+    fi
+
+    return 1
+}
+
+# 比较版本号，返回当前版本是否大于等于最低要求
+version_ge() {
+    local current_version=$1
+    local required_version=$2
+    local IFS=.
+    local -a current_parts required_parts
+    local max_len=0
+
+    read -r -a current_parts <<< "$current_version"
+    read -r -a required_parts <<< "$required_version"
+
+    (( ${#current_parts[@]} > max_len )) && max_len=${#current_parts[@]}
+    (( ${#required_parts[@]} > max_len )) && max_len=${#required_parts[@]}
+
+    for ((i = 0; i < max_len; i++)); do
+        local current_part=${current_parts[i]:-0}
+        local required_part=${required_parts[i]:-0}
+
+        if ((10#$current_part > 10#$required_part)); then
+            return 0
+        fi
+        if ((10#$current_part < 10#$required_part)); then
+            return 1
+        fi
+    done
+
+    return 0
+}
+
+# 检查命令是否存在
+require_command() {
+    local command_name=$1
+    local install_hint=$2
+
+    if command -v "$command_name" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    local error_message="缺少依赖命令: ${command_name}"
+    [[ -n "$install_hint" ]] && error_message="${error_message}（${install_hint}）"
+    die "$error_message"
+}
+
+# 解析 curl 版本号
+detect_curl_version() {
+    local first_line
+    local raw_version
+
+    IFS= read -r first_line < <(curl --version 2>/dev/null) || return 1
+    raw_version=${first_line#curl }
+    raw_version=${raw_version%% *}
+    extract_version_number "$raw_version"
+}
+
+# 解析 jq 版本号
+detect_jq_version() {
+    local raw_version
+
+    raw_version=$(jq --version 2>/dev/null) || return 1
+    extract_version_number "$raw_version"
+}
+
+# 解析 md5sum 版本号；部分实现可能不支持 --version，此时返回空
+detect_md5sum_version() {
+    local first_line
+
+    IFS= read -r first_line < <(md5sum --version 2>/dev/null) || return 1
+    extract_version_number "$first_line"
+}
+
+# 校验最低版本要求
+check_minimum_version() {
+    local command_name=$1
+    local current_version=$2
+    local required_version=$3
+
+    if version_ge "$current_version" "$required_version"; then
+        return 0
+    fi
+
+    die "${command_name} 版本过低：当前 ${current_version}，最低要求 ${required_version}"
+}
+
+# 启动时检查运行环境
+check_runtime_dependencies() {
+    local curl_version
+    local jq_version
+    local md5sum_version
+
+    require_command "curl" "请先安装 curl"
+    curl_version=$(detect_curl_version) || die "无法解析 curl 版本，请检查 'curl --version' 输出"
+
+    require_command "jq" "请先安装 jq"
+    jq_version=$(detect_jq_version) || die "无法解析 jq 版本，请检查 'jq --version' 输出"
+    check_minimum_version "jq" "$jq_version" "$MIN_JQ_VERSION"
+
+    require_command "md5sum" "请先安装 coreutils，或确保 md5sum 可用"
+    md5sum_version=$(detect_md5sum_version || true)
+    [[ -z "$md5sum_version" ]] && md5sum_version="未知"
+
+    log "运行环境检查通过 | curl ${curl_version} | jq ${jq_version} | md5sum ${md5sum_version}"
 }
 
 # 解析配置文件
@@ -64,8 +182,9 @@ execute_api_request() {
     local panel_token=$(echo -n "1panel${api_key}${current_ts}" | md5sum | cut -d' ' -f1)
     local current_time=$(TZ=$TIME_ZONE date '+%Y-%m-%d %H:%M:%S %Z (UTC%:z)')
 
-    # 构造并发送API请求
-    local response=$(curl -sSk -w "\n%{json}" -X POST "$api_url/api/v2/websites/ssl/upload" \
+    # 仅提取 HTTP 状态码，兼容旧版 curl（如 7.68.0 不支持 %{json}）
+    local response
+    response=$(curl -sSk -w "\n%{http_code}" -X POST "$api_url/api/v2/websites/ssl/upload" \
         -H "1Panel-Token: $panel_token" \
         -H "1Panel-Timestamp: $current_ts" \
         -H "Content-Type: application/json" \
@@ -79,13 +198,28 @@ execute_api_request() {
 }
 EOF
     )")
+    local curl_exit=$?
 
     # 解析响应结果
-    local resp_body=$(sed '$d' <<< "$response")
-    local curl_info=$(tail -n1 <<< "$response")
-    local http_code=$(jq -r '.http_code' <<< "$curl_info")
-    local resp_code=$(jq -r '.code' <<< "$resp_body" 2>/dev/null)
-    local resp_msg=$(jq -r '.message' <<< "$resp_body" 2>/dev/null || echo "响应解析失败")
+    local resp_body="$response"
+    local http_code="000"
+    if [[ "$response" == *$'\n'* ]]; then
+        resp_body=${response%$'\n'*}
+        http_code=${response##*$'\n'}
+    fi
+    [[ "$http_code" =~ ^[0-9]{3}$ ]] || http_code="000"
+
+    if (( curl_exit != 0 )); then
+        log "[${server_name}] ✘ 证书推送失败（curl退出码: ${curl_exit} | HTTP状态: ${http_code}）"
+        [[ -n "$resp_body" ]] && log "[${server_name}] 错误详情: ${resp_body:0:200}"
+        return 1
+    fi
+
+    local resp_code
+    local resp_msg
+    resp_code=$(jq -r '.code // empty' <<< "$resp_body" 2>/dev/null)
+    resp_msg=$(jq -r '.message // empty' <<< "$resp_body" 2>/dev/null)
+    [[ -z "$resp_msg" ]] && resp_msg="响应解析失败"
 
     # 返回结果状态码
     if [[ "$resp_code" == "200" ]]; then
@@ -173,6 +307,9 @@ shift $((OPTIND - 1))
 if [[ ${#SSLID_LIST[@]} -ne ${#selected_servers[@]} ]]; then
     die "SSLID数量（${#SSLID_LIST[@]}）与服务器数量（${#selected_servers[@]}）不匹配"
 fi
+
+# 运行环境检查 --------------------------------------------------------
+check_runtime_dependencies
 
 # 加载配置文件
 [[ ! -f "$CONFIG_FILE" ]] && die "配置文件不存在: $CONFIG_FILE"
