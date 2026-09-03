@@ -21,6 +21,12 @@ import (
 	"time"
 )
 
+var ( // 版本信息，请勿修改，build 时脚本通过 -ldflags 注入。
+	version   = "dev"
+	commit    = "unknown"
+	buildDate = "unknown"
+)
+
 const (
 	// 默认证书和私钥路径。
 	defaultCertFile = "./fullchain.pem"
@@ -96,6 +102,13 @@ type uploadResponse struct {
 
 // main 是程序入口，负责转交到 run() 并处理退出码。
 func main() {
+	log(
+		"%s1Panel-SSL-Uploader%s %sV%s%s (%s%s%s) built on %s%s%s\n",
+		yellow, reset,
+		yellow, version, reset,
+		gray, commit, reset,
+		blue, buildDate, reset,
+	)
 	os.Exit(run(os.Args[1:]))
 }
 
@@ -734,17 +747,49 @@ func truncateString(value string, limit int) string {
 	return value[:limit]
 }
 
-// logf 输出普通日志。
+// 定义日志输出的颜色常量
+const (
+	red     = "\033[31m"
+	green   = "\033[32m"
+	yellow  = "\033[33m"
+	blue    = "\033[34m"
+	magenta = "\033[35m"
+	cyan    = "\033[36m"
+	gray    = "\033[90m"
+	reset   = "\033[0m"
+)
+
+// log 输出普通日志，可定义输出颜色。
+func log(format string, args ...any) {
+	fmt.Printf(format, args...)
+}
+
+// logf 输出带时间的普通日志。
 func logf(format string, args ...any) {
-	fmt.Printf("[%s] %s\n", time.Now().Format("2006-01-02 15:04:05"), fmt.Sprintf(format, args...))
+	fmt.Printf("%s[%s] %s%s\n",
+		green,
+		time.Now().Format("2006-01-02 15:04:05"),
+		fmt.Sprintf(format, args...),
+		reset,
+	)
 }
 
-// warnf 输出警告日志。
+// warnf 输出带时间的警告日志。
 func warnf(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "[%s] WARNING: %s\n", time.Now().Format("2006-01-02 15:04:05"), fmt.Sprintf(format, args...))
+	fmt.Fprintf(os.Stderr, "%s[%s] WARNING: %s%s\n",
+		yellow,
+		time.Now().Format("2006-01-02 15:04:05"),
+		fmt.Sprintf(format, args...),
+		reset,
+	)
 }
 
-// fatalf 输出错误日志并终止运行。
+// fatalf 输出带时间的错误日志并终止运行。
 func fatalf(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "[%s] ERROR: %s\n", time.Now().Format("2006-01-02 15:04:05"), fmt.Sprintf(format, args...))
+	fmt.Fprintf(os.Stderr, "%s[%s] ERROR: %s%s\n",
+		red,
+		time.Now().Format("2006-01-02 15:04:05"),
+		fmt.Sprintf(format, args...),
+		reset,
+	)
 }
