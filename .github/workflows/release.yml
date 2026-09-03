@@ -1,0 +1,135 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.x'
+          cache: true
+
+      - name: Calculate version
+        id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ ! -f version.json ]; then
+            echo "错误：找不到 version.json"
+            exit 1
+          fi
+
+          MAJOR=$(jq -r '.major' version.json)
+
+          if ! [[ "$MAJOR" =~ ^[0-9]+$ ]]; then
+            echo "错误：version.json 中的 major 必须是整数"
+            exit 1
+          fi
+
+          LAST=$(
+            gh release list \
+              --limit 1000 \
+              --json tagName \
+              --jq '.[].tagName' |
+            grep -E "^v${MAJOR}\.[0-9]+$" |
+            sed "s/^v${MAJOR}\.//" |
+            sort -n |
+            tail -1
+          )
+
+          if [ -z "$LAST" ]; then
+            MINOR=1
+          else
+            MINOR=$((LAST + 1))
+          fi
+
+          VERSION="${MAJOR}.${MINOR}"
+          TAG="v${VERSION}"
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+          echo "版本：$VERSION"
+          echo "Tag：$TAG"
+
+      - name: Get build information
+        id: build_info
+        run: |
+          COMMIT=$(git rev-parse --short HEAD)
+          DATE=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+          echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
+          echo "date=$DATE" >> "$GITHUB_OUTPUT"
+
+          echo "Commit：$COMMIT"
+          echo "Build date：$DATE"
+
+      - name: Build
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          COMMIT: ${{ steps.build_info.outputs.commit }}
+          BUILD_DATE: ${{ steps.build_info.outputs.date }}
+        run: |
+          if [ ! -f config.json ]; then
+            echo "错误：找不到 config.json"
+            exit 1
+          fi
+
+          mkdir -p dist
+
+          LDFLAGS="-s -w -X main.version=$VERSION -X main.commit=$COMMIT -X main.buildDate=$BUILD_DATE"
+
+          GOOS=linux GOARCH=amd64 \
+            go build \
+            -ldflags "$LDFLAGS" \
+            -o dist/1panel-ssl-uploader-linux-amd64 .
+
+          GOOS=linux GOARCH=arm64 \
+            go build \
+            -ldflags "$LDFLAGS" \
+            -o dist/1panel-ssl-uploader-linux-arm64 .
+
+          GOOS=linux GOARCH=arm GOARM=7 \
+            go build \
+            -ldflags "$LDFLAGS" \
+            -o dist/1panel-ssl-uploader-linux-armv7 .
+
+          GOOS=linux GOARCH=loong64 \
+            go build \
+            -ldflags "$LDFLAGS" \
+            -o dist/1panel-ssl-uploader-linux-loong64 .
+
+          GOOS=linux GOARCH=riscv64 \
+            go build \
+            -ldflags "$LDFLAGS" \
+            -o dist/1panel-ssl-uploader-linux-riscv64 .
+
+          cp config.json dist/config.json
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create \
+            "${{ steps.version.outputs.tag }}" \
+            dist/* \
+            --title "${{ steps.version.outputs.version }}" \
+            --generate-notes
