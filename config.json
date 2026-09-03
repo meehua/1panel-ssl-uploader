@@ -1,5 +1,4 @@
 {
-  "version": 1,
   "servers": {
     "server1": {
       "url": "https://panel1.example.com",

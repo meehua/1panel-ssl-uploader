@@ -2,7 +2,7 @@
 
 一个用于 1Panel 之间同步 SSL 证书的 Go 工具，也可以用于手动上传证书到 1Panel，适合配合定时任务或证书签发后的自动执行流程。
 
-这个版本已经改写为纯 Go 实现，运行时不再依赖 `curl`、`jq`、`md5sum` 等外部命令，直接编译成一个独立二进制即可使用。
+已经改写为纯 Go 实现，运行时不再依赖 `curl`、`jq`、`md5sum` 等外部命令，直接编译成一个独立二进制即可使用。
 
 ## 构建
 
@@ -20,7 +20,7 @@ go test ./...
 
 ### 自动模式
 
-默认读取当前目录下的 `./fullchain.pem` 和 `./privkey.pem`，如果两个文件在最近 5 秒内发生变化就执行上传。
+默认读取当前执行目录下的 `./fullchain.pem` 和 `./privkey.pem`，如果两个文件在最近 5 秒内发生变化就执行上传。
 
 ```bash
 ./ssl_upload -s 12,23 -S server1,server2
@@ -56,11 +56,8 @@ go test ./...
 
 ## 配置文件
 
-配置格式与原脚本保持一致：
-
 ```json
 {
-  "version": 1,
   "servers": {
     "server1": {
       "url": "https://panel1.example.com",
@@ -78,8 +75,8 @@ go test ./...
 
 说明：
 
+- 配置文件不再要求 `version` 字段。
 - `api_version` 不填时默认使用 `2`。
-- `version` 目前固定为 `1`。
 - 建议把 `config.json` 权限设为 `600`。
 
 ## 时区

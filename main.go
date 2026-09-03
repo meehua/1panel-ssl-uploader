@@ -1,3 +1,4 @@
+// 1Panel SSL 上传工具：读取本地证书和私钥，按配置中的服务器信息上传到 1Panel。
 package main
 
 import (
@@ -20,31 +21,43 @@ import (
 )
 
 const (
-	defaultCertFile        = "./fullchain.pem"
-	defaultKeyFile         = "./privkey.pem"
-	defaultAutoWindow      = 5
-	defaultSemiAutoWindow  = 86400
-	defaultMaxRetries      = 8
-	defaultRetryInterval   = 15
-	supportedConfigVersion = 1
-	defaultAPIVersion      = 2
+	// 默认证书和私钥路径。
+	defaultCertFile = "./fullchain.pem"
+	defaultKeyFile  = "./privkey.pem"
 
+	// 自动模式下，默认认为最近 5 秒内有更新就触发上传。
+	defaultAutoWindow = 5
+
+	// 半自动模式下，默认允许 24 小时窗口内的修改被识别为需要上传。
+	defaultSemiAutoWindow = 86400
+
+	// 默认重试参数。
+	defaultMaxRetries    = 8
+	defaultRetryInterval = 15
+
+	// 默认 1Panel API 版本。
+	defaultAPIVersion = 2
+
+	// HTTP 请求的超时控制。
 	requestConnectTimeout    = 10 * time.Second
 	requestTotalTimeout      = 60 * time.Second
 	requestTLSHandshakeLimit = 10 * time.Second
 )
 
+// configFile 表示配置文件的结构体。
+// 该工具不再要求配置文件携带 version 字段，避免无意义的版本锁定。
 type configFile struct {
-	Version int                    `json:"version"`
 	Servers map[string]serverEntry `json:"servers"`
 }
 
+// serverEntry 表示单个服务器的配置字段。
 type serverEntry struct {
 	URL        string `json:"url"`
 	Token      string `json:"token"`
 	APIVersion *int   `json:"api_version"`
 }
 
+// resolvedServer 是解析后的服务器配置，便于后续上传逻辑直接使用。
 type resolvedServer struct {
 	Name       string
 	URL        string
@@ -52,6 +65,7 @@ type resolvedServer struct {
 	APIVersion int
 }
 
+// options 保存命令行参数与运行时选项。
 type options struct {
 	sslIDs         []string
 	servers        []string
@@ -64,6 +78,7 @@ type options struct {
 	retryInterval  int
 }
 
+// uploadResponse 保存一次上传请求的响应信息。
 type uploadResponse struct {
 	HTTPStatus int
 	Code       int
@@ -71,10 +86,12 @@ type uploadResponse struct {
 	Insecure   bool
 }
 
+// main 是程序入口，负责转交到 run() 并处理退出码。
 func main() {
 	os.Exit(run(os.Args[1:]))
 }
 
+// run 是主逻辑入口，完成参数解析、配置校验、证书判断和批量上传。
 func run(args []string) int {
 	opts, err := parseOptions(args)
 	if err != nil {
@@ -98,6 +115,7 @@ func run(args []string) int {
 		return 1
 	}
 
+	// 自动模式使用默认窗口；半自动模式使用自定义窗口。
 	window := defaultAutoWindow
 	if opts.certFile != defaultCertFile || opts.keyFile != defaultKeyFile {
 		window = opts.semiAutoWindow
@@ -166,6 +184,7 @@ func run(args []string) int {
 	return 1
 }
 
+// parseOptions 负责解析命令行参数，并给出必要的校验。
 func parseOptions(args []string) (options, error) {
 	fs := flag.NewFlagSet("ssl-uploader", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -217,6 +236,7 @@ func parseOptions(args []string) (options, error) {
 	return opts, nil
 }
 
+// splitCSV 将逗号分隔的字符串转为切片，并去掉空格。
 func splitCSV(value string) []string {
 	if value == "" {
 		return nil
@@ -228,6 +248,7 @@ func splitCSV(value string) []string {
 	return parts
 }
 
+// defaultConfigFilePath 返回当前工作目录下的默认配置文件路径。
 func defaultConfigFilePath() string {
 	wd, err := os.Getwd()
 	if err != nil {
@@ -236,6 +257,7 @@ func defaultConfigFilePath() string {
 	return filepath.Join(wd, "config.json")
 }
 
+// parseSSLID 把字符串型 SSL ID 转换为 int64，并校验非负性。
 func parseSSLID(value string) (int64, error) {
 	parsed, err := strconv.ParseInt(value, 10, 64)
 	if err != nil {
@@ -247,6 +269,7 @@ func parseSSLID(value string) (int64, error) {
 	return parsed, nil
 }
 
+// loadConfig 从 JSON 文件中加载配置。
 func loadConfig(path string) (configFile, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -260,13 +283,8 @@ func loadConfig(path string) (configFile, error) {
 	return cfg, nil
 }
 
+// validateConfig 检查配置文件的字段是否合法，并确保服务器配置完整。
 func validateConfig(cfg configFile) error {
-	if cfg.Version == 0 {
-		return fmt.Errorf("配置文件缺少 version")
-	}
-	if cfg.Version != supportedConfigVersion {
-		return fmt.Errorf("不支持的配置文件版本: %d（当前支持: %d）", cfg.Version, supportedConfigVersion)
-	}
 	if len(cfg.Servers) == 0 {
 		return fmt.Errorf("配置文件中没有配置任何服务器")
 	}
@@ -293,6 +311,7 @@ func validateConfig(cfg configFile) error {
 	return nil
 }
 
+// resolveServer 解析并规范化服务器配置，返回可直接上传的对象。
 func resolveServer(cfg configFile, name string) (resolvedServer, error) {
 	server, ok := cfg.Servers[name]
 	if !ok {
@@ -310,6 +329,7 @@ func resolveServer(cfg configFile, name string) (resolvedServer, error) {
 	}, nil
 }
 
+// checkCertificateFiles 检查证书和私钥是否存在且可读。
 func checkCertificateFiles(certPath, keyPath string) error {
 	if err := ensureReadableFile(certPath, "证书文件"); err != nil {
 		return err
@@ -320,6 +340,7 @@ func checkCertificateFiles(certPath, keyPath string) error {
 	return nil
 }
 
+// ensureReadableFile 确保给定路径是存在且可读取的普通文件。
 func ensureReadableFile(path, label string) error {
 	info, err := os.Stat(path)
 	if err != nil {
@@ -340,6 +361,7 @@ func ensureReadableFile(path, label string) error {
 	return nil
 }
 
+// shouldUploadCertificate 根据证书/私钥最近修改时间判断是否需要上传。
 func shouldUploadCertificate(certPath, keyPath string, force bool, windowSeconds int, loc *time.Location) (bool, error) {
 	if force {
 		logf("强制模式激活，跳过证书更新时间检测")
@@ -376,10 +398,12 @@ func shouldUploadCertificate(certPath, keyPath string, force bool, windowSeconds
 	return false, nil
 }
 
+// formatDisplayTime 将时间转换为可读的本地格式。
 func formatDisplayTime(t time.Time, loc *time.Location) string {
 	return t.In(loc).Format("2006-01-02 15:04:05 MST (UTC-07:00)")
 }
 
+// displayLocation 读取环境变量 TIME_ZONE，若为空则回退到亚洲/上海。
 func displayLocation() *time.Location {
 	zone := os.Getenv("TIME_ZONE")
 	if zone == "" {
@@ -393,6 +417,7 @@ func displayLocation() *time.Location {
 	return loc
 }
 
+// processServer 按服务器逐个执行上传，并在失败时按策略重试。
 func processServer(server resolvedServer, sslID int64, certPath, keyPath string, loc *time.Location, maxRetries, retryInterval int) error {
 	attempt := 1
 	for attempt <= maxRetries {
@@ -412,6 +437,7 @@ func processServer(server resolvedServer, sslID int64, certPath, keyPath string,
 	return fmt.Errorf("[%s] upload failed", server.Name)
 }
 
+// attemptUpload 触发一次上传，并在 TLS 验证错误时尝试 insecure 模式重试。
 func attemptUpload(server resolvedServer, sslID int64, certPath, keyPath string, loc *time.Location) error {
 	now := time.Now()
 	resp, err := performUpload(server, sslID, certPath, keyPath, loc, now, false)
@@ -447,6 +473,7 @@ func attemptUpload(server resolvedServer, sslID int64, certPath, keyPath string,
 	return fmt.Errorf("[%s] upload failed", server.Name)
 }
 
+// performUpload 执行实际的 HTTP POST 上传，构造签名头与 JSON 载荷。
 func performUpload(server resolvedServer, sslID int64, certPath, keyPath string, loc *time.Location, now time.Time, insecure bool) (uploadResponse, error) {
 	apiPath, err := getAPIPath(server.APIVersion)
 	if err != nil {
@@ -495,6 +522,7 @@ func performUpload(server resolvedServer, sslID int64, certPath, keyPath string,
 	return result, nil
 }
 
+// buildPayload 拼装上传到 1Panel 的 JSON 请求体。
 func buildPayload(certPath, keyPath string, sslID int64, description string) ([]byte, error) {
 	certificate, err := os.ReadFile(certPath)
 	if err != nil {
@@ -522,11 +550,13 @@ func buildPayload(certPath, keyPath string, sslID int64, description string) ([]
 	return json.Marshal(payload)
 }
 
+// signToken 根据 API Token 和时间戳生成 1Panel 签名。
 func signToken(apiKey string, timestamp int64) string {
-	sum := md5.Sum([]byte(fmt.Sprintf("1panel%s%d", apiKey, timestamp)))
+	sum := md5.Sum(fmt.Appendf(nil, "1panel%s%d", apiKey, timestamp))
 	return fmt.Sprintf("%x", sum)
 }
 
+// getAPIPath 根据 1Panel API 版本返回对应的上传接口路径。
 func getAPIPath(apiVersion int) (string, error) {
 	switch apiVersion {
 	case 1:
@@ -538,10 +568,12 @@ func getAPIPath(apiVersion int) (string, error) {
 	}
 }
 
+// currentDisplayTime 根据本地时区返回展示用时间字符串。
 func currentDisplayTime(now time.Time, loc *time.Location) string {
 	return now.In(loc).Format("2006-01-02 15:04:05 MST (UTC-07:00)")
 }
 
+// newHTTPClient 构造带超时和 TLS 配置的 HTTP 客户端。
 func newHTTPClient(insecure bool) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = http.ProxyFromEnvironment
@@ -559,6 +591,7 @@ func newHTTPClient(insecure bool) *http.Client {
 	}
 }
 
+// isTLSVerificationError 判断错误是否为 TLS/证书校验失败。
 func isTLSVerificationError(err error) bool {
 	var unknownAuthorityErr *x509.UnknownAuthorityError
 	var hostnameErr x509.HostnameError
@@ -570,6 +603,7 @@ func isTLSVerificationError(err error) bool {
 	return strings.Contains(message, "x509:") || strings.Contains(message, "certificate")
 }
 
+// truncateString 裁剪字符串到固定长度，避免日志过长。
 func truncateString(value string, limit int) string {
 	if len(value) <= limit {
 		return value
@@ -577,14 +611,17 @@ func truncateString(value string, limit int) string {
 	return value[:limit]
 }
 
+// logf 输出普通日志。
 func logf(format string, args ...any) {
 	fmt.Printf("[%s] %s\n", time.Now().Format("2006-01-02 15:04:05"), fmt.Sprintf(format, args...))
 }
 
+// warnf 输出警告日志。
 func warnf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "[%s] WARNING: %s\n", time.Now().Format("2006-01-02 15:04:05"), fmt.Sprintf(format, args...))
 }
 
+// fatalf 输出错误日志并终止运行。
 func fatalf(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "[%s] ERROR: %s\n", time.Now().Format("2006-01-02 15:04:05"), fmt.Sprintf(format, args...))
 }

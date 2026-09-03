@@ -15,7 +15,6 @@ import (
 func TestValidateConfig(t *testing.T) {
 	apiVersion := 2
 	cfg := configFile{
-		Version: supportedConfigVersion,
 		Servers: map[string]serverEntry{
 			"server1": {
 				URL:        "https://panel.example.com",
@@ -27,6 +26,19 @@ func TestValidateConfig(t *testing.T) {
 
 	if err := validateConfig(cfg); err != nil {
 		t.Fatalf("validateConfig returned error: %v", err)
+	}
+
+	cfgWithoutVersion := configFile{
+		Servers: map[string]serverEntry{
+			"server1": {
+				URL:        "https://panel.example.com",
+				Token:      "token-1",
+				APIVersion: &apiVersion,
+			},
+		},
+	}
+	if err := validateConfig(cfgWithoutVersion); err != nil {
+		t.Fatalf("validateConfig should accept config without a version field: %v", err)
 	}
 
 	cfg.Servers["server1"] = serverEntry{URL: "", Token: "token-1"}
