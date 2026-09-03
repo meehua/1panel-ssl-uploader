@@ -3,16 +3,17 @@
     "server1": {
       "protocol": "https",
       "host": "panel1.example.com",
-      "port": 443,
-      "token": "your-api-token1",
+      "port": 34567,
+      "token": "your-api-token-1",
       "server_ip": "10.0.0.11",
       "api_version": 2
     },
     "server2": {
-      "protocol": "https",
+      "protocol": "http",
       "host": "panel2.example.com",
-      "port": 443,
-      "token": "your-api-token2",
+      "port": 27586,
+      "token": "your-api-token-2",
+      "server_ip": "10.0.0.12",
       "api_version": 1
     }
   }
