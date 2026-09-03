@@ -99,7 +99,7 @@ func main() {
 	os.Exit(run(os.Args[1:]))
 }
 
-// run 是主逻辑入口，完成参数解析、配置校验、证书判断和批量上传。
+// run 是主逻辑入口，完成参数解析、配置校验、证书判断和多目标上传。
 func run(args []string) int {
 	opts, err := parseOptions(args)
 	if err != nil {
@@ -183,12 +183,12 @@ func run(args []string) int {
 
 	if overallExitCode == 0 {
 		logf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-		logf("全部证书推送完成")
+		logf("全部服务器证书上传完成")
 		return 0
 	}
 
 	logf("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	logf("部分证书推送失败")
+	logf("部分服务器证书上传失败")
 	return 1
 }
 
@@ -256,13 +256,13 @@ func splitCSV(value string) []string {
 	return parts
 }
 
-// defaultConfigFilePath 返回当前工作目录下的默认配置文件路径。
+// defaultConfigFilePath 返回可执行文件所在目录下的默认配置文件路径。
 func defaultConfigFilePath() string {
-	wd, err := os.Getwd()
+	exePath, err := os.Executable()
 	if err != nil {
 		return "config.json"
 	}
-	return filepath.Join(wd, "config.json")
+	return filepath.Join(filepath.Dir(exePath), "config.json")
 }
 
 // parseSSLID 把字符串型 SSL ID 转换为 int64，并校验非负性。
@@ -520,7 +520,7 @@ func displayLocation() *time.Location {
 func processServer(server resolvedServer, sslID int64, certPath, keyPath string, loc *time.Location, maxRetries, retryInterval int) error {
 	attempt := 1
 	for attempt <= maxRetries {
-		logf("[%s] 开始证书推送 (%d/%d)", server.Name, attempt, maxRetries)
+		logf("[%s] 开始证书上传 (%d/%d)", server.Name, attempt, maxRetries)
 		if err := attemptUpload(server, sslID, certPath, keyPath, loc); err == nil {
 			return nil
 		}
@@ -556,9 +556,9 @@ func attemptUpload(server resolvedServer, sslID int64, certPath, keyPath string,
 
 	if resp.Code == 200 {
 		if resp.Insecure {
-			logf("[%s] ✔ 证书推送成功（WARNING: 本次跳过 HTTPS 证书验证） | API v%d | SSL ID: %d", server.Name, server.APIVersion, sslID)
+			logf("[%s] ✔ 证书上传成功（WARNING: 本次跳过 HTTPS 证书验证） | API v%d | SSL ID: %d", server.Name, server.APIVersion, sslID)
 		} else {
-			logf("[%s] ✔ 证书推送成功 | API v%d | SSL ID: %d", server.Name, server.APIVersion, sslID)
+			logf("[%s] ✔ 证书上传成功 | API v%d | SSL ID: %d", server.Name, server.APIVersion, sslID)
 		}
 		return nil
 	}
@@ -567,7 +567,7 @@ func attemptUpload(server resolvedServer, sslID int64, certPath, keyPath string,
 	if strings.TrimSpace(message) == "" {
 		message = "响应中没有 message 字段"
 	}
-	logf("[%s] ✘ 证书推送失败 | HTTP: %d | 业务码: %d", server.Name, resp.HTTPStatus, resp.Code)
+	logf("[%s] ✘ 证书上传失败 | HTTP: %d | 业务码: %d", server.Name, resp.HTTPStatus, resp.Code)
 	logf("[%s] 错误详情: %s", server.Name, truncateString(message, 500))
 	return fmt.Errorf("[%s] upload failed", server.Name)
 }

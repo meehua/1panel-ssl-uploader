@@ -80,6 +80,17 @@ func TestParseLegacyServerURL(t *testing.T) {
 	}
 }
 
+func TestDefaultConfigFilePathUsesExecutableDir(t *testing.T) {
+	exePath, err := os.Executable()
+	if err != nil {
+		t.Fatalf("os.Executable failed: %v", err)
+	}
+	want := filepath.Join(filepath.Dir(exePath), "config.json")
+	if got := defaultConfigFilePath(); got != want {
+		t.Fatalf("defaultConfigFilePath() = %q, want %q", got, want)
+	}
+}
+
 func TestGetAPIPath(t *testing.T) {
 	tests := []struct {
 		version int
