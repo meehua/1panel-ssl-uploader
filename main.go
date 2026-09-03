@@ -13,6 +13,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -52,7 +53,11 @@ type configFile struct {
 
 // serverEntry 表示单个服务器的配置字段。
 type serverEntry struct {
-	URL        string `json:"url"`
+	URL        string `json:"url,omitempty"`
+	Protocol   string `json:"protocol,omitempty"`
+	Host       string `json:"host,omitempty"`
+	Port       int    `json:"port,omitempty"`
+	ServerIP   string `json:"server_ip,omitempty"`
 	Token      string `json:"token"`
 	APIVersion *int   `json:"api_version"`
 }
@@ -60,7 +65,10 @@ type serverEntry struct {
 // resolvedServer 是解析后的服务器配置，便于后续上传逻辑直接使用。
 type resolvedServer struct {
 	Name       string
-	URL        string
+	Protocol   string
+	Host       string
+	Port       int
+	ServerIP   string
 	Token      string
 	APIVersion int
 }
@@ -293,18 +301,24 @@ func validateConfig(cfg configFile) error {
 		if strings.TrimSpace(name) == "" {
 			return fmt.Errorf("配置文件中的服务器名称不能为空")
 		}
-		if strings.TrimSpace(server.URL) == "" {
-			return fmt.Errorf("服务器 '%s' 缺少有效的 url", name)
-		}
 		if strings.TrimSpace(server.Token) == "" {
 			return fmt.Errorf("服务器 '%s' 缺少有效的 token", name)
 		}
-		apiVersion := defaultAPIVersion
-		if server.APIVersion != nil {
-			apiVersion = *server.APIVersion
+		resolved, err := normalizeServerEntry(name, server)
+		if err != nil {
+			return err
 		}
-		if apiVersion != 1 && apiVersion != 2 {
-			return fmt.Errorf("服务器 '%s' 的 api_version 无效: %d（只能是 1 或 2）", name, apiVersion)
+		if resolved.Protocol != "http" && resolved.Protocol != "https" {
+			return fmt.Errorf("服务器 '%s' 的 protocol 无效: %s（只能是 http 或 https）", name, resolved.Protocol)
+		}
+		if resolved.Host == "" {
+			return fmt.Errorf("服务器 '%s' 缺少有效的 host", name)
+		}
+		if resolved.Port < 1 || resolved.Port > 65535 {
+			return fmt.Errorf("服务器 '%s' 的 port 无效: %d", name, resolved.Port)
+		}
+		if resolved.APIVersion != 1 && resolved.APIVersion != 2 {
+			return fmt.Errorf("服务器 '%s' 的 api_version 无效: %d（只能是 1 或 2）", name, resolved.APIVersion)
 		}
 	}
 
@@ -317,16 +331,101 @@ func resolveServer(cfg configFile, name string) (resolvedServer, error) {
 	if !ok {
 		return resolvedServer{}, fmt.Errorf("配置文件中不存在服务器: %s", name)
 	}
+	return normalizeServerEntry(name, server)
+}
+
+// normalizeServerEntry 将配置中的服务器定义解析成标准化结构。
+func normalizeServerEntry(name string, server serverEntry) (resolvedServer, error) {
 	apiVersion := defaultAPIVersion
 	if server.APIVersion != nil {
 		apiVersion = *server.APIVersion
 	}
+
+	protocol := strings.ToLower(strings.TrimSpace(server.Protocol))
+	host := strings.TrimSpace(server.Host)
+	port := server.Port
+	serverIP := strings.TrimSpace(server.ServerIP)
+
+	if protocol == "" && host == "" && port == 0 {
+		parsedProtocol, parsedHost, parsedPort, err := parseLegacyServerURL(server.URL)
+		if err != nil {
+			return resolvedServer{}, fmt.Errorf("服务器 '%s' 的 url 无效: %w", name, err)
+		}
+		protocol = parsedProtocol
+		host = parsedHost
+		port = parsedPort
+	}
+
+	if protocol == "" {
+		return resolvedServer{}, fmt.Errorf("服务器 '%s' 缺少有效的 protocol", name)
+	}
+	if host == "" {
+		return resolvedServer{}, fmt.Errorf("服务器 '%s' 缺少有效的 host", name)
+	}
+	if port == 0 {
+		port = defaultPortForProtocol(protocol)
+	}
+	if port < 1 || port > 65535 {
+		return resolvedServer{}, fmt.Errorf("服务器 '%s' 的 port 无效: %d", name, port)
+	}
+	if protocol != "http" && protocol != "https" {
+		return resolvedServer{}, fmt.Errorf("服务器 '%s' 的 protocol 无效: %s（只能是 http 或 https）", name, protocol)
+	}
+
 	return resolvedServer{
 		Name:       name,
-		URL:        strings.TrimSpace(server.URL),
+		Protocol:   protocol,
+		Host:       host,
+		Port:       port,
+		ServerIP:   serverIP,
 		Token:      strings.TrimSpace(server.Token),
 		APIVersion: apiVersion,
 	}, nil
+}
+
+// parseLegacyServerURL 将旧配置中的 url 拆分为协议、主机和端口。
+func parseLegacyServerURL(rawURL string) (string, string, int, error) {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return "", "", 0, fmt.Errorf("url 不能为空")
+	}
+
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return "", "", 0, err
+	}
+	if parsed.Scheme == "" {
+		return "", "", 0, fmt.Errorf("缺少协议")
+	}
+	host := strings.TrimSpace(parsed.Hostname())
+	if host == "" {
+		return "", "", 0, fmt.Errorf("缺少主机")
+	}
+	portText := strings.TrimSpace(parsed.Port())
+	port := defaultPortForProtocol(strings.ToLower(parsed.Scheme))
+	if portText != "" {
+		parsedPort, err := strconv.Atoi(portText)
+		if err != nil {
+			return "", "", 0, fmt.Errorf("端口无效: %s", portText)
+		}
+		port = parsedPort
+	}
+	if parsed.Path != "" && parsed.Path != "/" {
+		return "", "", 0, fmt.Errorf("url 中不应包含路径: %s", parsed.Path)
+	}
+	return strings.ToLower(parsed.Scheme), host, port, nil
+}
+
+// defaultPortForProtocol 返回协议对应的默认端口。
+func defaultPortForProtocol(protocol string) int {
+	switch strings.ToLower(strings.TrimSpace(protocol)) {
+	case "http":
+		return 80
+	case "https":
+		return 443
+	default:
+		return 0
+	}
 }
 
 // checkCertificateFiles 检查证书和私钥是否存在且可读。
@@ -485,15 +584,16 @@ func performUpload(server resolvedServer, sslID int64, certPath, keyPath string,
 		return uploadResponse{}, fmt.Errorf("[%s] 请求数据构造失败: %w", server.Name, err)
 	}
 
-	requestURL := strings.TrimRight(server.URL, "/") + apiPath
+	requestURL := server.requestURL(apiPath)
 	timestamp := now.Unix()
 	panelToken := signToken(server.Token, timestamp)
 
-	client := newHTTPClient(insecure)
+	client := newHTTPClient(insecure, server.hostNameForTLS())
 	req, err := http.NewRequest(http.MethodPost, requestURL, bytes.NewReader(payload))
 	if err != nil {
 		return uploadResponse{}, err
 	}
+	req.Host = server.hostHeader()
 	req.Header.Set("1Panel-Token", panelToken)
 	req.Header.Set("1Panel-Timestamp", fmt.Sprintf("%d", timestamp))
 	req.Header.Set("Content-Type", "application/json")
@@ -520,6 +620,29 @@ func performUpload(server resolvedServer, sslID int64, certPath, keyPath string,
 	result.Message = parsed.Message
 
 	return result, nil
+}
+
+// requestURL 生成上传请求的完整目标地址。
+func (s resolvedServer) requestURL(apiPath string) string {
+	host := s.Host
+	if strings.TrimSpace(s.ServerIP) != "" {
+		host = s.ServerIP
+	}
+	baseURL := fmt.Sprintf("%s://%s", s.Protocol, net.JoinHostPort(host, strconv.Itoa(s.Port)))
+	return strings.TrimRight(baseURL, "/") + apiPath
+}
+
+// hostHeader 返回需要写入请求的 Host 头。
+func (s resolvedServer) hostHeader() string {
+	if s.Port == defaultPortForProtocol(s.Protocol) || s.Port == 0 {
+		return s.Host
+	}
+	return net.JoinHostPort(s.Host, strconv.Itoa(s.Port))
+}
+
+// hostNameForTLS 返回 TLS SNI / 证书校验使用的主机名。
+func (s resolvedServer) hostNameForTLS() string {
+	return s.Host
 }
 
 // buildPayload 拼装上传到 1Panel 的 JSON 请求体。
@@ -574,7 +697,7 @@ func currentDisplayTime(now time.Time, loc *time.Location) string {
 }
 
 // newHTTPClient 构造带超时和 TLS 配置的 HTTP 客户端。
-func newHTTPClient(insecure bool) *http.Client {
+func newHTTPClient(insecure bool, serverName string) *http.Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = http.ProxyFromEnvironment
 	transport.DialContext = (&net.Dialer{
@@ -582,8 +705,8 @@ func newHTTPClient(insecure bool) *http.Client {
 		KeepAlive: 30 * time.Second,
 	}).DialContext
 	transport.TLSHandshakeTimeout = requestTLSHandshakeLimit
-	if insecure {
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	if insecure || strings.TrimSpace(serverName) != "" {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: insecure, ServerName: strings.TrimSpace(serverName)}
 	}
 	return &http.Client{
 		Transport: transport,

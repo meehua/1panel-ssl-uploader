@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -17,7 +19,9 @@ func TestValidateConfig(t *testing.T) {
 	cfg := configFile{
 		Servers: map[string]serverEntry{
 			"server1": {
-				URL:        "https://panel.example.com",
+				Protocol:   "https",
+				Host:       "panel.example.com",
+				Port:       443,
 				Token:      "token-1",
 				APIVersion: &apiVersion,
 			},
@@ -31,7 +35,9 @@ func TestValidateConfig(t *testing.T) {
 	cfgWithoutVersion := configFile{
 		Servers: map[string]serverEntry{
 			"server1": {
-				URL:        "https://panel.example.com",
+				Protocol:   "https",
+				Host:       "panel.example.com",
+				Port:       443,
 				Token:      "token-1",
 				APIVersion: &apiVersion,
 			},
@@ -41,9 +47,36 @@ func TestValidateConfig(t *testing.T) {
 		t.Fatalf("validateConfig should accept config without a version field: %v", err)
 	}
 
-	cfg.Servers["server1"] = serverEntry{URL: "", Token: "token-1"}
-	if err := validateConfig(cfg); err == nil || !strings.Contains(err.Error(), "缺少有效的 url") {
-		t.Fatalf("expected url validation error, got %v", err)
+	cfg.Servers["server1"] = serverEntry{Protocol: "https", Host: "", Port: 443, Token: "token-1"}
+	if err := validateConfig(cfg); err == nil || !strings.Contains(err.Error(), "缺少有效的 host") {
+		t.Fatalf("expected host validation error, got %v", err)
+	}
+}
+
+func TestValidateConfigAcceptsLegacyURL(t *testing.T) {
+	apiVersion := 1
+	cfg := configFile{
+		Servers: map[string]serverEntry{
+			"server1": {
+				URL:        "https://panel.example.com:8443",
+				Token:      "token-1",
+				APIVersion: &apiVersion,
+			},
+		},
+	}
+
+	if err := validateConfig(cfg); err != nil {
+		t.Fatalf("validateConfig should accept legacy url config: %v", err)
+	}
+}
+
+func TestParseLegacyServerURL(t *testing.T) {
+	protocol, host, port, err := parseLegacyServerURL("https://panel.example.com:8443")
+	if err != nil {
+		t.Fatalf("parseLegacyServerURL returned error: %v", err)
+	}
+	if protocol != "https" || host != "panel.example.com" || port != 8443 {
+		t.Fatalf("unexpected parsed result: %s %s %d", protocol, host, port)
 	}
 }
 
@@ -204,9 +237,24 @@ func TestPerformUpload(t *testing.T) {
 	}))
 	defer server.Close()
 
+	parsedURL, err := url.Parse(server.URL)
+	if err != nil {
+		t.Fatalf("parse server url: %v", err)
+	}
+	host, portText, err := net.SplitHostPort(parsedURL.Host)
+	if err != nil {
+		t.Fatalf("split host port: %v", err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		t.Fatalf("parse port: %v", err)
+	}
+
 	serverConfig := resolvedServer{
 		Name:       "server1",
-		URL:        server.URL,
+		Protocol:   "http",
+		Host:       host,
+		Port:       port,
 		Token:      "api-token",
 		APIVersion: 2,
 	}
@@ -217,6 +265,28 @@ func TestPerformUpload(t *testing.T) {
 	}
 	if resp.Code != 200 || resp.HTTPStatus != http.StatusOK {
 		t.Fatalf("unexpected response: %+v", resp)
+	}
+}
+
+func TestRequestTargetUsesServerIP(t *testing.T) {
+	serverConfig := resolvedServer{
+		Name:       "server1",
+		Protocol:   "https",
+		Host:       "panel.example.com",
+		Port:       8443,
+		ServerIP:   "10.0.0.23",
+		Token:      "api-token",
+		APIVersion: 2,
+	}
+
+	if got := serverConfig.requestURL("/api/v2/websites/ssl/upload"); got != "https://10.0.0.23:8443/api/v2/websites/ssl/upload" {
+		t.Fatalf("unexpected request url: %s", got)
+	}
+	if got := serverConfig.hostHeader(); got != "panel.example.com:8443" {
+		t.Fatalf("unexpected host header: %s", got)
+	}
+	if got := serverConfig.hostNameForTLS(); got != "panel.example.com" {
+		t.Fatalf("unexpected tls host name: %s", got)
 	}
 }
 
@@ -238,9 +308,24 @@ func TestAttemptUploadRetriesOnTLSFailure(t *testing.T) {
 	}))
 	defer tlsServer.Close()
 
+	parsedTLSServerURL, err := url.Parse(tlsServer.URL)
+	if err != nil {
+		t.Fatalf("parse tls server url: %v", err)
+	}
+	tlsHost, tlsPortText, err := net.SplitHostPort(parsedTLSServerURL.Host)
+	if err != nil {
+		t.Fatalf("split tls host port: %v", err)
+	}
+	tlsPort, err := strconv.Atoi(tlsPortText)
+	if err != nil {
+		t.Fatalf("parse tls port: %v", err)
+	}
+
 	serverConfig := resolvedServer{
 		Name:       "server1",
-		URL:        tlsServer.URL,
+		Protocol:   "https",
+		Host:       tlsHost,
+		Port:       tlsPort,
 		Token:      "api-token",
 		APIVersion: 2,
 	}

@@ -1,12 +1,17 @@
 {
   "servers": {
     "server1": {
-      "url": "https://panel1.example.com",
+      "protocol": "https",
+      "host": "panel1.example.com",
+      "port": 443,
       "token": "your-api-token1",
+      "server_ip": "10.0.0.11",
       "api_version": 2
     },
     "server2": {
-      "url": "https://panel2.example.com",
+      "protocol": "https",
+      "host": "panel2.example.com",
+      "port": 443,
       "token": "your-api-token2",
       "api_version": 1
     }

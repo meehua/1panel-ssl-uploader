@@ -60,12 +60,17 @@ go test ./...
 {
   "servers": {
     "server1": {
-      "url": "https://panel1.example.com",
+      "protocol": "https",
+      "host": "panel1.example.com",
+      "port": 443,
       "token": "your-api-token1",
+      "server_ip": "10.0.0.11",
       "api_version": 2
     },
     "server2": {
-      "url": "https://panel2.example.com",
+      "protocol": "https",
+      "host": "panel2.example.com",
+      "port": 443,
       "token": "your-api-token2",
       "api_version": 1
     }
@@ -76,6 +81,8 @@ go test ./...
 说明：
 
 - 配置文件不再要求 `version` 字段。
+- 服务器地址建议拆成 `protocol`、`host`、`port` 三个字段填写。
+- 如果配置了 `server_ip`，程序会直接请求这个 IP，但仍然保留 `host` 作为 Host 头和 TLS 主机名。
 - `api_version` 不填时默认使用 `2`。
 - 建议把 `config.json` 权限设为 `600`。
 
