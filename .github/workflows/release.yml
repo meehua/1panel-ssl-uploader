@@ -56,7 +56,7 @@ jobs:
           )
 
           if [ -z "$LAST" ]; then
-            MINOR=1
+            MINOR=0
           else
             MINOR=$((LAST + 1))
           fi
