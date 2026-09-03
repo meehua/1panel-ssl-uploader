@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "servers": {
+    "server1": {
+      "url": "https://panel1.example.com",
+      "token": "your-api-token1",
+      "api_version": 2
+    },
+    "server2": {
+      "url": "https://panel2.example.com",
+      "token": "your-api-token2",
+      "api_version": 1
+    }
+  }
+}
