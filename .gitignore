@@ -1,0 +1,14 @@
+# Build output
+dist/
+bin/
+
+# IDE
+.vscode/
+.idea/
+
+# Go
+1panel-ssl-uploader
+
+# OS
+.DS_Store
+Thumbs.db
