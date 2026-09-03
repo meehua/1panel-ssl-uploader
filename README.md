@@ -18,41 +18,41 @@ go test ./...
 
 ## 使用
 
-### 自动模式
+### 自动模式【推荐】
 
-默认读取当前执行目录下的 `./fullchain.pem` 和 `./privkey.pem`，如果两个文件在最近 5 秒内发生变化就执行上传。
+默认读取当前执行目录下的 `./fullchain.pem` 和 `./privkey.pem`，如果两个文件在最近 5 秒内发生变化就执行上传，推荐在1panel的执行证书签发后自动使用。
 
 ```bash
-./ssl_upload -s 12,23 -S server1,server2
+./ssl_upload --ssl-id 12,23 --server server1,server2
 ```
 
 ### 半自动模式
 
-只要显式指定了证书或私钥路径，就会进入半自动模式。默认允许文件在最近 86400 秒内发生变化，可用 `-m` 覆盖。
+只要显式指定了证书或私钥路径，就会进入半自动模式。默认允许文件在最近 86400 秒内发生变化，可用 `--window` 覆盖。
 
 ```bash
-./ssl_upload -s 123 -S server1 -c /path/to/cert.pem -p /path/to/key.pem
+./ssl_upload --ssl-id 123 --server server1 --cert /path/to/cert.pem --key /path/to/key.pem
 ```
 
 ### 强制模式
 
 ```bash
-./ssl_upload -s 123 -S server1 -f
+./ssl_upload --ssl-id 123 --server server1 --force
 ```
 
 ## 参数
 
 | 参数 | 必需 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `-s` | 是 | 无 | 目标 SSL 证书 ID 列表，多个 ID 用逗号分隔 |
-| `-S` | 是 | 无 | 目标服务器名称列表，多个名称用逗号分隔，顺序必须与 `-s` 对应 |
-| `-c` | 否 | `./fullchain.pem` | 证书文件路径 |
-| `-p` | 否 | `./privkey.pem` | 私钥文件路径 |
-| `-C` | 否 | 当前目录下的 `config.json` | 配置文件路径 |
-| `-f` | 否 | 关闭 | 强制模式，跳过更新时间检测 |
-| `-m` | 否 | `86400` | 半自动模式时间窗口，单位秒 |
-| `-r` | 否 | `8` | 最大重试次数 |
-| `-i` | 否 | `15` | 重试间隔，单位秒 |
+| `--ssl-id` | 是 | 无 | 目标 SSL 证书 ID 列表，多个 ID 用逗号分隔 |
+| `--server` | 是 | 无 | 目标服务器名称列表，多个名称用逗号分隔，与 `--ssl-id` 一一对应 |
+| `--cert` | 否 | `./fullchain.pem` | 证书文件路径 |
+| `--key` | 否 | `./privkey.pem` | 私钥文件路径 |
+| `--config` | 否 | 当前目录下的 `config.json` | 配置文件路径 |
+| `--force` | 否 | 关闭 | 强制模式，跳过更新时间检测 |
+| `--window` | 否 | `86400` | 文件更新时间检测窗口，单位秒 |
+| `--retries` | 否 | `8` | 最大重试次数 |
+| `--interval` | 否 | `15` | 重试间隔，单位秒 |
 
 ## 配置文件
 

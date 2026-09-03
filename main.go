@@ -201,15 +201,15 @@ func parseOptions(args []string) (options, error) {
 		retryInterval:  defaultRetryInterval,
 	}
 
-	fs.StringVar(&sslIDs, "s", "", "SSL ID 列表")
-	fs.StringVar(&opts.certFile, "c", defaultCertFile, "证书文件路径")
-	fs.StringVar(&opts.keyFile, "p", defaultKeyFile, "私钥文件路径")
-	fs.StringVar(&servers, "S", "", "服务器列表")
-	fs.StringVar(&opts.configFile, "C", configFile, "配置文件路径")
-	fs.BoolVar(&opts.force, "f", false, "强制上传")
-	fs.IntVar(&opts.semiAutoWindow, "m", defaultSemiAutoWindow, "半自动模式时间窗口")
-	fs.IntVar(&opts.maxRetries, "r", defaultMaxRetries, "最大重试次数")
-	fs.IntVar(&opts.retryInterval, "i", defaultRetryInterval, "重试间隔")
+	fs.StringVar(&sslIDs, "ssl-id", "", "SSL ID 列表")
+	fs.StringVar(&opts.certFile, "cert", defaultCertFile, "证书文件路径")
+	fs.StringVar(&opts.keyFile, "key", defaultKeyFile, "私钥文件路径")
+	fs.StringVar(&servers, "server", "", "服务器列表")
+	fs.StringVar(&opts.configFile, "config", configFile, "配置文件路径")
+	fs.BoolVar(&opts.force, "force", false, "强制上传")
+	fs.IntVar(&opts.semiAutoWindow, "window", defaultSemiAutoWindow, "半自动模式时间窗口")
+	fs.IntVar(&opts.maxRetries, "retries", defaultMaxRetries, "最大重试次数")
+	fs.IntVar(&opts.retryInterval, "interval", defaultRetryInterval, "重试间隔")
 
 	if err := fs.Parse(args); err != nil {
 		return options{}, err
@@ -218,10 +218,10 @@ func parseOptions(args []string) (options, error) {
 	opts.sslIDs = splitCSV(sslIDs)
 	opts.servers = splitCSV(servers)
 	if len(opts.sslIDs) == 0 {
-		return options{}, fmt.Errorf("必须使用 -s 指定 SSL ID")
+		return options{}, fmt.Errorf("必须使用 --ssl-id 指定 SSL ID")
 	}
 	if len(opts.servers) == 0 {
-		return options{}, fmt.Errorf("必须使用 -S 指定服务器")
+		return options{}, fmt.Errorf("必须使用 --server 指定服务器")
 	}
 	if opts.semiAutoWindow < 0 {
 		return options{}, fmt.Errorf("无效时间窗口: %d", opts.semiAutoWindow)
