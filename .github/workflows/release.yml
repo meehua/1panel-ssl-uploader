@@ -82,6 +82,20 @@ jobs:
           echo "Commit：$COMMIT"
           echo "Build date：$DATE"
 
+      - name: Generate release notes
+        run: |
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
+
+          if [ -z "$LAST_TAG" ]; then
+            git log --pretty=format:"- %s" > release.md
+          else
+            git log "${LAST_TAG}..HEAD" --pretty=format:"- %s" > release.md
+          fi
+
+          if [ ! -s release.md ]; then
+            echo "- No changes recorded" > release.md
+          fi
+
       - name: Build
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -97,28 +111,35 @@ jobs:
 
           LDFLAGS="-s -w -X main.version=$VERSION -X main.commit=$COMMIT -X main.buildDate=$BUILD_DATE"
 
+          export CGO_ENABLED=0
+
           GOOS=linux GOARCH=amd64 \
             go build \
+            -trimpath \
             -ldflags "$LDFLAGS" \
             -o dist/1panel-ssl-uploader-linux-amd64 .
 
           GOOS=linux GOARCH=arm64 \
             go build \
+            -trimpath \
             -ldflags "$LDFLAGS" \
             -o dist/1panel-ssl-uploader-linux-arm64 .
 
           GOOS=linux GOARCH=arm GOARM=7 \
             go build \
+            -trimpath \
             -ldflags "$LDFLAGS" \
             -o dist/1panel-ssl-uploader-linux-armv7 .
 
           GOOS=linux GOARCH=loong64 \
             go build \
+            -trimpath \
             -ldflags "$LDFLAGS" \
             -o dist/1panel-ssl-uploader-linux-loong64 .
 
           GOOS=linux GOARCH=riscv64 \
             go build \
+            -trimpath \
             -ldflags "$LDFLAGS" \
             -o dist/1panel-ssl-uploader-linux-riscv64 .
 
@@ -131,5 +152,5 @@ jobs:
           gh release create \
             "${{ steps.version.outputs.tag }}" \
             dist/* \
-            --title "${{ steps.version.outputs.version }}" \
-            --generate-notes
+            --title "${{ steps.version.outputs.tag }}" \
+            --notes-file release.md
